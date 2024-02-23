@@ -12,3 +12,7 @@ read_cam = {path="../read_cam"}
 solver = {path="../solver"}
 pathfind = {path="../pathfind"}
 minifb = "*"
+log = "*"
+eframe = "0.26.2"
+bytes = "*"
+env_logger = "*"
