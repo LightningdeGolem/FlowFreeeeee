@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{thread, time::Duration};
 
 use serialport::{Error, SerialPort, TTYPort};
 
@@ -30,6 +30,8 @@ pub enum MotorCommand {
     InstructionChain,
     PenUp,
     PenDown,
+    AutoPenupOn,
+    AutoPenupOff,
 }
 
 #[repr(u8)]
@@ -87,7 +89,7 @@ where
     }
 
     pub fn ping(&mut self) -> Result<(), Error> {
-        self.port.write(&[MotorCommand::Ping as u8])?;
+        self.port.write_all(&[MotorCommand::Ping as u8])?;
         if self.wait_response()? != MotorResponse::Ok {
             //todo
             panic!("Not ok");
@@ -100,13 +102,16 @@ where
         while bytes[0] != 0xFF {
             self.port.read_exact(&mut bytes)?;
         }
-        self.port.write(&[255, 255, 255, 255, 255])?;
+        self.port.write_all(&[255, 255, 255, 255, 255])?;
 
         Ok(())
     }
 
     pub fn send_send_ack(&mut self) -> Result<(), Error> {
-        Ok(self.port.write(&[255, 255, 255, 255, 255]).map(|_| ())?)
+        Ok(self
+            .port
+            .write_all(&[255, 255, 255, 255, 255])
+            .map(|_| ())?)
     }
 
     pub fn goto(&mut self, x: u16, y: u16) -> Result<MotorResponse, Error> {
@@ -115,12 +120,12 @@ where
         let yb = y.to_le_bytes();
 
         self.port
-            .write(&[MotorCommand::GotoAbsolute as _, xb[0], xb[1], yb[0], yb[1]])?;
+            .write_all(&[MotorCommand::GotoAbsolute as _, xb[0], xb[1], yb[0], yb[1]])?;
         self.wait_response()
     }
 
     pub fn goto_grid(&mut self, x: u8, y: u8) -> Result<MotorResponse, Error> {
-        self.port.write(&[MotorCommand::GotoGrid as _, x, y])?;
+        self.port.write_all(&[MotorCommand::GotoGrid as _, x, y])?;
         println!("Waiting for response...");
         self.wait_response()
     }
@@ -152,15 +157,15 @@ where
             .flatten()
             .collect();
 
-        self.port.write(&[MotorCommand::SetGridCoords as u8])?;
-        self.port.write(&bytes)?;
+        self.port.write_all(&[MotorCommand::SetGridCoords as u8])?;
+        self.port.write_all(&bytes)?;
 
         self.wait_response()
     }
 
     pub fn home(&mut self) -> Result<(MotorResponse, (u16, u16)), Error> {
         println!("Homing!");
-        self.port.write(&[MotorCommand::BeginHoming as u8])?;
+        self.port.write_all(&[MotorCommand::BeginHoming as u8])?;
         self.port.flush()?;
 
         let resp = self.wait_response()?;
@@ -179,6 +184,7 @@ where
         &mut self,
         commands: &[SolvingCommand],
     ) -> Result<MotorResponse, Error> {
+        println!("Executing...");
         let mut cmds = Vec::new();
         for cmd in commands.iter() {
             cmd.as_bytes(&mut cmds);
@@ -189,20 +195,33 @@ where
             return Ok(MotorResponse::Ok);
         }
 
+        println!("Instruction count: {}", cmds.len());
+        println!("Instructions: {:?}", cmds);
+
         self.port
-            .write(&[MotorCommand::InstructionChain as u8, cmds.len() as u8])?;
-        self.port.write(&cmds)?;
+            .write_all(&[MotorCommand::InstructionChain as u8, cmds.len() as u8])?;
+        thread::sleep(Duration::from_millis(10));
+        self.port.write_all(&cmds)?;
 
         self.wait_response()
     }
 
     pub fn pen_up(&mut self) -> Result<MotorResponse, Error> {
-        self.port.write(&[MotorCommand::PenUp as u8])?;
+        self.port.write_all(&[MotorCommand::PenUp as u8])?;
         self.wait_response()
     }
 
     pub fn pen_down(&mut self) -> Result<MotorResponse, Error> {
-        self.port.write(&[MotorCommand::PenDown as u8])?;
+        self.port.write_all(&[MotorCommand::PenDown as u8])?;
+        self.wait_response()
+    }
+
+    pub fn set_auto_pen_up(&mut self, auto_up: bool) -> Result<MotorResponse, Error> {
+        if auto_up {
+            self.port.write_all(&[MotorCommand::AutoPenupOn as u8])?;
+        } else {
+            self.port.write_all(&[MotorCommand::AutoPenupOff as u8])?;
+        }
         self.wait_response()
     }
 }

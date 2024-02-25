@@ -17,6 +17,7 @@ pub enum MotorCommand {
     MotorExecute(Vec<Instruction>),
     PenUp,
     PenDown,
+    SetAutoPenup(bool),
 }
 
 pub struct MotorState {
@@ -112,6 +113,7 @@ pub fn run_motor_thread(
                 }
                 MotorCommand::PenUp => motor.pen_up(),
                 MotorCommand::PenDown => motor.pen_down(),
+                MotorCommand::SetAutoPenup(auto_penup) => motor.set_auto_pen_up(*auto_penup),
             };
 
             match result {

@@ -9,18 +9,38 @@ use std::{
 use classify_dots::DotLocationInfo;
 use eframe::{
     egui::{
-        mutex::RwLock, Color32, ColorImage, ComboBox, Image, Sense, SidePanel, Slider,
+        mutex::RwLock, Color32, ColorImage, ComboBox, Image, Key, Sense, SidePanel, Slider,
         TextureHandle, TextureOptions, TopBottomPanel, ViewportBuilder,
     },
     epaint::ImageDelta,
     App, CreationContext, NativeOptions,
 };
 use log::info;
+use pathfind::Instruction;
 
 use crate::{
     camera_input::{self, CameraFrameInfo, CameraSettings, DeviceSelect},
     motor_thread::{motor_thread, MotorCommand, MotorState},
 };
+
+#[derive(Copy, Clone)]
+enum RapidSolveState {
+    Off,
+    Cancel,
+    MovingToCorner,
+    WaitingForCorner,
+    WaitingForMotor,
+    WaitingForCamera,
+}
+
+impl RapidSolveState {
+    pub fn is_active(&self) -> bool {
+        match self {
+            Self::Off => false,
+            _ => true,
+        }
+    }
+}
 
 pub fn go() {
     let (frame_push, frame_recv) = channel();
@@ -90,6 +110,7 @@ pub struct MyApp {
 
     motor_state: Arc<RwLock<MotorState>>,
     motor_command: Sender<MotorCommand>,
+    auto_penup: bool,
 
     mot_tl: Option<(u32, u32)>,
     mot_tr: Option<(u32, u32)>,
@@ -100,6 +121,7 @@ pub struct MyApp {
     head_x: u8,
     head_y: u8,
     selected_camera: usize,
+    rapid_solve_state: RapidSolveState,
 }
 
 impl MyApp {
@@ -149,6 +171,8 @@ impl MyApp {
             mot_tr: None,
             clicked_loc: None,
             selected_camera: 0,
+            auto_penup: true,
+            rapid_solve_state: RapidSolveState::Off,
         }
     }
 }
@@ -309,7 +333,10 @@ impl App for MyApp {
         });
 
         let mut is_fully_calibrated = false;
-        let is_executing = self.motor_state.read().is_executing;
+        let is_executing =
+            self.motor_state.read().is_executing | self.rapid_solve_state.is_active();
+
+        self.do_rapid_solve();
 
         SidePanel::right("mot_controls").show(ctx, |ui| {
             eframe::egui::containers::scroll_area::ScrollArea::vertical().show(ui, |ui| {
@@ -352,6 +379,12 @@ impl App for MyApp {
                         }
                     });
 
+                    if ui.checkbox(&mut self.auto_penup, "Auto penup").changed() {
+                        self.motor_command
+                            .send(MotorCommand::SetAutoPenup(self.auto_penup))
+                            .unwrap();
+                    }
+
                     if !self.motor_state.read().has_homed {
                         return;
                     }
@@ -380,6 +413,28 @@ impl App for MyApp {
                                 .send(MotorCommand::MoveTo(click_x as u32, click_y as u32))
                                 .unwrap();
                         }
+                    } else {
+                        ui.input(|i| {
+                            if let Some(loc) = &mut self.clicked_loc {
+                                let mut moved = true;
+                                if i.key_pressed(Key::ArrowLeft) {
+                                    loc.0 -= 10;
+                                } else if i.key_pressed(Key::ArrowRight) {
+                                    loc.0 += 10;
+                                } else if i.key_pressed(Key::ArrowUp) {
+                                    loc.1 -= 10;
+                                } else if i.key_pressed(Key::ArrowDown) {
+                                    loc.1 += 10;
+                                } else {
+                                    moved = false;
+                                }
+                                if moved {
+                                    self.motor_command
+                                        .send(MotorCommand::MoveTo(loc.0, loc.1))
+                                        .unwrap();
+                                }
+                            }
+                        });
                     }
 
                     ui.horizontal(|ui| {
@@ -425,17 +480,92 @@ impl App for MyApp {
                         });
                     }
 
+                    if ui.button("Test sequence").clicked() {
+                        let path = vec![
+                            Instruction::Goto(0, 0),
+                            Instruction::Down,
+                            Instruction::Down,
+                            Instruction::Right,
+                            Instruction::Goto(2, 2),
+                            Instruction::Up,
+                            Instruction::Left,
+                        ];
+                        self.motor_command
+                            .send(MotorCommand::MotorExecute(path))
+                            .unwrap();
+                    }
+
                     if let Some(path) = &self.camera_settings.read().path {
                         if ui.button("ACCIO ROBOT GO OF DOOOOOM").clicked() {
+                            info!("Sending commands: {:?}", path);
                             self.motor_command
                                 .send(MotorCommand::MotorExecute(path.clone()))
                                 .unwrap();
                         }
                     }
+
+                    if !self.rapid_solve_state.is_active() {
+                        if ui.button("DANGER BUTTON").clicked() {
+                            self.rapid_solve_state = RapidSolveState::MovingToCorner;
+                        }
+                    }
                 });
+                if self.rapid_solve_state.is_active() {
+                    if ui.button("ABORT").clicked() {
+                        self.rapid_solve_state = RapidSolveState::Cancel;
+                    }
+                }
             });
         }
 
         ctx.request_repaint();
+    }
+}
+
+impl MyApp {
+    pub fn do_rapid_solve(&mut self) {
+        if (!self.motor_state.read().has_homed) || (!self.motor_state.read().has_calibrated) {
+            self.rapid_solve_state = RapidSolveState::Off;
+            return;
+        }
+
+        match self.rapid_solve_state {
+            RapidSolveState::Off => (),
+            RapidSolveState::Cancel => {
+                if !self.motor_state.read().is_executing {
+                    self.rapid_solve_state = RapidSolveState::Off;
+                }
+            }
+            RapidSolveState::MovingToCorner => {
+                info!("Moving to corner!");
+                let size = self.motor_state.read().size;
+                self.motor_command
+                    .send(MotorCommand::MoveTo(size.0 as u32 - 10, size.1 as u32 - 10))
+                    .unwrap();
+                self.rapid_solve_state = RapidSolveState::WaitingForCorner;
+            }
+            RapidSolveState::WaitingForCorner => {
+                info!("Waiting for move to corner!");
+                if !self.motor_state.read().is_executing {
+                    self.rapid_solve_state = RapidSolveState::WaitingForCamera;
+                    info!("Waiting for camera");
+                }
+            }
+            RapidSolveState::WaitingForCamera => {
+                if let Some(path) = &self.camera_settings.read().path {
+                    self.motor_command
+                        .send(MotorCommand::MotorExecute(path.clone()))
+                        .unwrap();
+                    self.rapid_solve_state = RapidSolveState::WaitingForMotor;
+                    info!("Waiting for motor");
+                }
+            }
+            RapidSolveState::WaitingForMotor => {
+                // info!("Waiting for execute");
+                if !self.motor_state.read().is_executing {
+                    self.rapid_solve_state = RapidSolveState::MovingToCorner;
+                }
+            }
+        }
     }
 }

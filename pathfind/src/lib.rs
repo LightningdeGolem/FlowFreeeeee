@@ -15,15 +15,24 @@ pub enum Instruction {
     ToViewArea,
 }
 
-fn find_start(unsolvied_grid: &Array2D) -> Option<(u8, isize, isize)> {
+fn find_start(unsolvied_grid: &Array2D, pos: (isize, isize)) -> Option<(u8, isize, isize)> {
+    let mut best = None;
     for i in 0..5 {
         for j in 0..5 {
             if unsolvied_grid[(i, j)] != 0 {
-                return Some((unsolvied_grid[(i, j)], i, j));
+                let dist = (i - pos.0).pow(2) + (j - pos.1).pow(2);
+                match best {
+                    None => best = Some((dist, (unsolvied_grid[(i, j)], i, j))),
+                    Some((score, _)) => {
+                        if score > dist {
+                            best = Some((dist, (unsolvied_grid[(i, j)], i, j)));
+                        }
+                    }
+                }
             }
         }
     }
-    None
+    best.map(|x| x.1)
 }
 
 fn iterate_around(x: isize, y: isize) -> impl Iterator<Item = ((isize, isize), Instruction)> {
@@ -40,9 +49,10 @@ fn iterate_around(x: isize, y: isize) -> impl Iterator<Item = ((isize, isize), I
 
 pub fn pathfind(mut unsolvied_grid: Array2D, solved_grid: &Array2D) -> Vec<Instruction> {
     let mut instructions = Vec::new();
+    let mut start_pos = (4, 4);
 
     loop {
-        let (col, mut x, mut y) = match find_start(&unsolvied_grid) {
+        let (col, mut x, mut y) = match find_start(&unsolvied_grid, start_pos) {
             Some(a) => a,
             None => break,
         };
@@ -64,6 +74,7 @@ pub fn pathfind(mut unsolvied_grid: Array2D, solved_grid: &Array2D) -> Vec<Instr
                 instructions.push(dir);
             } else {
                 unsolvied_grid[(x, y)] = 0;
+                start_pos = (x, y);
                 break;
             }
         }
