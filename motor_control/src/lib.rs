@@ -32,6 +32,8 @@ pub enum MotorCommand {
     PenDown,
     AutoPenupOn,
     AutoPenupOff,
+
+    SetMotorSpeed,
 }
 
 #[repr(u8)]
@@ -222,6 +224,14 @@ where
         } else {
             self.port.write_all(&[MotorCommand::AutoPenupOff as u8])?;
         }
+        self.wait_response()
+    }
+
+    pub fn set_motor_speed(&mut self, speed: i32, accel: i32) -> Result<MotorResponse, Error> {
+        self.port.write_all(&[MotorCommand::SetMotorSpeed as u8])?;
+        self.port.write_all(&speed.to_le_bytes())?;
+        self.port.write_all(&accel.to_le_bytes())?;
+
         self.wait_response()
     }
 }

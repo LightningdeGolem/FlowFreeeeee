@@ -18,6 +18,7 @@ pub enum MotorCommand {
     PenUp,
     PenDown,
     SetAutoPenup(bool),
+    SetSpeed(i32, i32),
 }
 
 pub struct MotorState {
@@ -114,6 +115,7 @@ pub fn run_motor_thread(
                 MotorCommand::PenUp => motor.pen_up(),
                 MotorCommand::PenDown => motor.pen_down(),
                 MotorCommand::SetAutoPenup(auto_penup) => motor.set_auto_pen_up(*auto_penup),
+                MotorCommand::SetSpeed(speed, accel) => motor.set_motor_speed(*speed, *accel),
             };
 
             match result {

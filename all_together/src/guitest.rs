@@ -122,6 +122,9 @@ pub struct MyApp {
     head_y: u8,
     selected_camera: usize,
     rapid_solve_state: RapidSolveState,
+
+    motor_speed: i32,
+    motor_accel: i32,
 }
 
 impl MyApp {
@@ -173,6 +176,9 @@ impl MyApp {
             selected_camera: 0,
             auto_penup: true,
             rapid_solve_state: RapidSolveState::Off,
+
+            motor_speed: 5000,
+            motor_accel: 20000,
         }
     }
 }
@@ -385,6 +391,26 @@ impl App for MyApp {
                             .unwrap();
                     }
 
+                    if ui.button("Get outa my way").clicked() {
+                        self.move_out_of_way();
+                    }
+
+                    ui.add(
+                        Slider::new(&mut self.motor_speed, 1..=1000000000)
+                            .logarithmic(true)
+                            .text("Motor speed"),
+                    );
+                    ui.add(
+                        Slider::new(&mut self.motor_accel, 1..=200000)
+                            .logarithmic(true)
+                            .text("Motor accel"),
+                    );
+                    if ui.button("Set speed/accel").clicked() {
+                        self.motor_command
+                            .send(MotorCommand::SetSpeed(self.motor_speed, self.motor_accel))
+                            .unwrap();
+                    }
+
                     if !self.motor_state.read().has_homed {
                         return;
                     }
@@ -523,6 +549,14 @@ impl App for MyApp {
 }
 
 impl MyApp {
+    fn move_out_of_way(&mut self) {
+        let size = self.motor_state.read().size;
+
+        self.motor_command
+            .send(MotorCommand::MoveTo(size.0 as u32 - 10, size.1 as u32 - 10))
+            .unwrap();
+    }
+
     pub fn do_rapid_solve(&mut self) {
         if (!self.motor_state.read().has_homed) || (!self.motor_state.read().has_calibrated) {
             self.rapid_solve_state = RapidSolveState::Off;
@@ -538,10 +572,7 @@ impl MyApp {
             }
             RapidSolveState::MovingToCorner => {
                 info!("Moving to corner!");
-                let size = self.motor_state.read().size;
-                self.motor_command
-                    .send(MotorCommand::MoveTo(size.0 as u32 - 10, size.1 as u32 - 10))
-                    .unwrap();
+                self.move_out_of_way();
                 self.rapid_solve_state = RapidSolveState::WaitingForCorner;
             }
             RapidSolveState::WaitingForCorner => {
